@@ -496,7 +496,7 @@ fun ProductosContent(navController: NavHostController, modifier: Modifier = Modi
                         productos.addAll(api.buscarProductos())
                     }
                     catch (e: Exception) {
-                        Log.e("API", "Error al registrar producto: ${e.message}")
+                        Log.e("API", "Error al registrar el producto: ${e.message}")
                     }
                 }
 
@@ -560,7 +560,7 @@ fun ProductosContent(navController: NavHostController, modifier: Modifier = Modi
                             productos.removeAt(index)
                         }
                         catch (e: Exception) {
-                            Log.e("API", "Error al registrar producto: ${e.message}")
+                            Log.e("API", "Error al eliminar el producto: ${e.message}")
                         }
                     }
 
