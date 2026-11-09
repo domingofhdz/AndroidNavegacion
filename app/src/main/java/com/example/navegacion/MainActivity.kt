@@ -1,6 +1,8 @@
 package com.example.navegacion
 
+import android.content.Context
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -30,10 +32,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,8 +57,15 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.navegacion.ui.theme.NavegacionTheme
-
-// Este es un cambio
+import kotlinx.coroutines.launch
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.converter.scalars.ScalarsConverterFactory
+import retrofit2.http.Field
+import retrofit2.http.FormUrlEncoded
+import retrofit2.http.GET
+import retrofit2.http.POST
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,21 +83,115 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun AppContent(modifier: Modifier = Modifier) {
-    val navController = rememberNavController()
 
-    NavHost(navController = navController, startDestination = "LoginContent") {
-        composable("LoginContent") { LoginContent(navController, modifier) }
-        composable("MenuContent") { MenuContent(navController, modifier) }
-        composable("FormularioProductosContent") { FormularioProductosContent(navController, modifier) }
-        composable("ListaProductosContent") { ListaProductosContent(navController, modifier) }
+
+class Preferencias(context: Context) {
+    private val preferences = context.getSharedPreferences("app", Context.MODE_PRIVATE)
+
+    fun guardar(prop: String, value: String) {
+        preferences.edit()
+            .putString(prop, value)
+            .apply()
+    }
+
+    fun obtener(prop: String, def: String): String? {
+        return preferences.getString(prop, def)
+    }
+
+    fun remover(prop: String) {
+        preferences.edit()
+            .remove(prop)
+            .apply()
     }
 }
+
+
+
+@Composable
+fun AppContent(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val preferencias = Preferencias(context)
+    var destination = "LoginContent"
+
+    if (preferencias.obtener("id", "") != "") {
+        destination = "MenuContent"
+    }
+
+
+
+    val navController = rememberNavController()
+
+    NavHost(navController = navController, startDestination = destination) {
+        composable("LoginContent") { LoginContent(navController, modifier) }
+        composable("MenuContent") { MenuContent(navController, modifier) }
+        composable("ProductosContent") { ProductosContent(navController, modifier) }
+    }
+}
+
+
+
+data class ModeloCategoria(val id: Int, val nombre: String)
+data class ModeloProducto(val id: Int, val nombre: String, val precio: Double, val idCategoria: Int, val nombreCategoria: String)
+
+interface ApiService {
+    @POST("iniciarSesion.php")
+    @FormUrlEncoded
+    suspend fun iniciarSesion(
+        @Field("nombreUsuario") nombreUsuario: String,
+        @Field("contrasena") contrasena: String
+    ): Response<String>
+
+    @GET("categorias.php?buscar&busqueda")
+    suspend fun buscarCategorias(): List<ModeloCategoria>
+
+    @POST("productos.php?registrar")
+    @FormUrlEncoded
+    suspend fun registrarProducto(
+        @Field("nombre") nombre: String,
+        @Field("precio") precio: Double,
+        @Field("categoria") categoria: Int
+    ): Response<Unit>
+
+    @GET("productos.php?buscar&busqueda")
+    suspend fun buscarProductos(): List<ModeloProducto>
+
+    @POST("productos.php?modificar")
+    @FormUrlEncoded
+    suspend fun modificarProducto(
+        @Field("id") id: Int,
+        @Field("nombre") nombre: String,
+        @Field("precio") precio: Double,
+        @Field("categoria") categoria: Int
+    ): Response<Unit>
+
+    @POST("productos.php?eliminar")
+    @FormUrlEncoded
+    suspend fun eliminarProducto(
+        @Field("id") id: Int
+    ): Response<Unit>
+}
+
+val retrofit = Retrofit.Builder()
+    .baseUrl("https://monitored-pays-archive-asks.trycloudflare.com/api/")
+    .addConverterFactory(ScalarsConverterFactory.create())
+    .addConverterFactory(GsonConverterFactory.create())
+    .build()
+
+val api = retrofit.create(ApiService::class.java)
+
+
 
 @Composable
 fun LoginContent(navController: NavHostController, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+
+
+
+    val preferencias = Preferencias(context)
+
+
+
+    val scope = rememberCoroutineScope()
 
     var usuario: String by remember { mutableStateOf("") }
     var contrasena: String by remember { mutableStateOf("") }
@@ -100,25 +205,6 @@ fun LoginContent(navController: NavHostController, modifier: Modifier = Modifier
     ) {
 
         // Aquí irán nuestras cajas de texto y botones.
-        Button(
-            onClick = {
-                navController.navigate("MenuContent")
-            },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Transparent,
-                contentColor = Color.Blue
-            ),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                "Menú",
-                style = TextStyle(textDecoration = TextDecoration.Underline),
-                textAlign = TextAlign.Start,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-
         Text(
             text = "Inicio de Sesión",
             fontSize = 20.sp,
@@ -148,8 +234,29 @@ fun LoginContent(navController: NavHostController, modifier: Modifier = Modifier
 
         Button(
             onClick = {
-                Toast.makeText(context, "Usuario: ${usuario}", Toast.LENGTH_SHORT).show()
-                Toast.makeText(context, "Contraseña: ${contrasena}", Toast.LENGTH_SHORT).show()
+
+
+
+                scope.launch {
+                    try {
+                        val respuesta : Response<String> = api.iniciarSesion(usuario, contrasena)
+                        val id : String = respuesta.body().toString()
+
+                        if (id.toDoubleOrNull() != null) {
+                            preferencias.guardar("id", id)
+                            navController.navigate("MenuContent")
+                        }
+                        else {
+                            Toast.makeText(context, "Usuario y/o contraseña incorrecto(s).", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    catch (e: Exception) {
+                        Log.e("API", "Error al iniciar sesión: ${e.message}")
+                    }
+                }
+
+
+
             },
             modifier = Modifier.align(Alignment.End)
         ) {
@@ -161,6 +268,10 @@ fun LoginContent(navController: NavHostController, modifier: Modifier = Modifier
 
 @Composable
 fun MenuContent(navController: NavHostController, modifier: Modifier = Modifier) {
+    val preferencias = Preferencias(LocalContext.current)
+
+
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -180,6 +291,10 @@ fun MenuContent(navController: NavHostController, modifier: Modifier = Modifier)
 
         Button(
             onClick = {
+                preferencias.remover("id")
+
+
+
                 navController.navigate("LoginContent")
             },
             colors = ButtonDefaults.buttonColors(
@@ -189,7 +304,7 @@ fun MenuContent(navController: NavHostController, modifier: Modifier = Modifier)
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                "Inicio de sesión",
+                "Cerrar sesión",
                 style = TextStyle(textDecoration = TextDecoration.Underline),
                 textAlign = TextAlign.Start,
                 modifier = Modifier.fillMaxWidth()
@@ -198,7 +313,7 @@ fun MenuContent(navController: NavHostController, modifier: Modifier = Modifier)
 
         Button(
             onClick = {
-                navController.navigate("FormularioProductosContent")
+                navController.navigate("ProductosContent")
             },
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Transparent,
@@ -207,25 +322,7 @@ fun MenuContent(navController: NavHostController, modifier: Modifier = Modifier)
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                "Formulario de Productos",
-                style = TextStyle(textDecoration = TextDecoration.Underline),
-                textAlign = TextAlign.Start,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
-        Button(
-            onClick = {
-                navController.navigate("ListaProductosContent")
-            },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Transparent,
-                contentColor = Color.Blue
-            ),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                "Lista de Productos",
+                "Productos",
                 style = TextStyle(textDecoration = TextDecoration.Underline),
                 textAlign = TextAlign.Start,
                 modifier = Modifier.fillMaxWidth()
@@ -237,139 +334,43 @@ fun MenuContent(navController: NavHostController, modifier: Modifier = Modifier)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FormularioProductosContent(navController: NavHostController, modifier: Modifier = Modifier) {
+fun ProductosContent(navController: NavHostController, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
 
-    var nombreProducto: String by remember { mutableStateOf("") }
+
+    var id: String by remember { mutableStateOf("") }
+    var nombre: String by remember { mutableStateOf("") }
     var precio: String by remember { mutableStateOf("") }
 
-    data class Categoria(val value: String, val label: String)
-    val categorias = listOf(
-        Categoria("1", "Galletas"),
-        Categoria("2", "Fritos"),
-        Categoria("3", "Refrescos")
-    )
+    val categorias = remember {
+        mutableStateListOf<ModeloCategoria>()
+    }
     var categoriaExpandido by remember { mutableStateOf(false) }
-    var categoria by remember { mutableStateOf(categorias[0]) }
+    var categoria by remember { mutableStateOf(ModeloCategoria(1, "")) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.Start,
-        verticalArrangement = Arrangement.Top
-    ) {
-
-        // Aquí irán nuestras cajas de texto y botones.
-        Button(
-            onClick = {
-                navController.navigate("MenuContent")
-            },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Transparent,
-                contentColor = Color.Blue
-            ),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                "Menú",
-                style = TextStyle(textDecoration = TextDecoration.Underline),
-                textAlign = TextAlign.Start,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = "Producto",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(text = "Nombre:")
-        TextField(
-            value = nombreProducto,
-            onValueChange = { nombreProducto = it },
-            placeholder = { Text("Ingresa el nombre") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(text = "Precio:")
-        TextField(
-            value = precio,
-            onValueChange = { precio = it },
-            placeholder = { Text("Ingresa el precio") },
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(text = "Categoría:")
-        ExposedDropdownMenuBox(
-            expanded = categoriaExpandido,
-            onExpandedChange = { categoriaExpandido = !categoriaExpandido }
-        ) {
-            TextField(
-                value = categoria.label,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Selecciona una opción") },
-                trailingIcon = {
-                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoriaExpandido)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .menuAnchor()
-            )
-
-            DropdownMenu(
-                expanded = categoriaExpandido,
-                onDismissRequest = { categoriaExpandido = false }
-            ) {
-                categorias.forEach { opcion ->
-                    DropdownMenuItem(
-                        text = { Text(opcion.label) },
-                        onClick = {
-                            categoria = opcion
-                            categoriaExpandido = false
-                        }
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(
-            onClick = {
-                Toast.makeText(context, "Nombre del producto: ${nombreProducto}", Toast.LENGTH_SHORT).show()
-                Toast.makeText(context, "Precio: ${precio}", Toast.LENGTH_SHORT).show()
-                Toast.makeText(context, "Categoría: ${categoria.label}", Toast.LENGTH_SHORT).show()
-                Toast.makeText(context, "Id Categoría: ${categoria.value}", Toast.LENGTH_SHORT).show()
-            },
-            modifier = Modifier.align(Alignment.End)
-        ) {
-            Text("Enviar")
-        }
-
-    }
-}
-
-@Composable
-fun ListaProductosContent(navController: NavHostController, modifier: Modifier = Modifier) {
-    val scrollState = rememberScrollState()
-
-    data class Producto(val nombreProducto: String, val precio: Double, val categoria: String)
     val productos = remember {
-        mutableStateListOf(
-            Producto("Sponch Fresa", 23.0, "Galletas"),
-            Producto("Emperador Combinado", 22.0, "Galletas"),
-            Producto("Florentinas Cajeta", 20.0, "Galletas"),
-            Producto("Coca Cola 600 ML", 21.0, "Refrescos")
-        )
+        mutableStateListOf<ModeloProducto>()
     }
+
+
+
+    LaunchedEffect(Unit) {
+        try {
+            categorias.clear()
+            categorias.addAll(api.buscarCategorias())
+            categoria = categorias[0]
+
+            productos.clear()
+            productos.addAll(api.buscarProductos())
+        }
+        catch (e: Exception) {
+            Log.e("API", "Error al buscar categorias: ${e.message}")
+        }
+    }
+
+
 
     Column(
         modifier = modifier
@@ -399,17 +400,128 @@ fun ListaProductosContent(navController: NavHostController, modifier: Modifier =
             )
         }
         Spacer(modifier = Modifier.height(16.dp))
+
         Text(
-            text = "Productos",
+            text = "Producto",
             fontSize = 20.sp,
-            fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
+            fontWeight = FontWeight.ExtraBold
         )
         Spacer(modifier = Modifier.height(16.dp))
+
+        Text(text = "Id:")
+        TextField(
+            value = id,
+            onValueChange = { id = it },
+            placeholder = { Text("") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(text = "Nombre:")
+        TextField(
+            value = nombre,
+            onValueChange = { nombre = it },
+            placeholder = { Text("Ingresa el nombre") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(text = "Precio:")
+        TextField(
+            value = precio,
+            onValueChange = { precio = it },
+            placeholder = { Text("Ingresa el precio") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(text = "Categoría:")
+        ExposedDropdownMenuBox(
+            expanded = categoriaExpandido,
+            onExpandedChange = { categoriaExpandido = !categoriaExpandido }
+        ) {
+            TextField(
+                value = categoria.nombre,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Selecciona una opción") },
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoriaExpandido)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor()
+            )
+
+            DropdownMenu(
+                expanded = categoriaExpandido,
+                onDismissRequest = { categoriaExpandido = false }
+            ) {
+                categorias.forEach { opcion ->
+                    DropdownMenuItem(
+                        text = { Text(opcion.nombre) },
+                        onClick = {
+                            categoria = opcion
+                            categoriaExpandido = false
+                        }
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = {
+
+
+
+                scope.launch {
+                    try {
+                        if (id == "") {
+                            api.registrarProducto(nombre, precio.toDouble(), categoria.id)
+                            Toast.makeText(context, "Producto registrado con éxito.", Toast.LENGTH_SHORT).show()
+                        }
+                        else {
+                            api.modificarProducto(id.toInt(), nombre, precio.toDouble(), categoria.id)
+                            Toast.makeText(context, "Producto modificado con éxito.", Toast.LENGTH_SHORT).show()
+                        }
+
+                        id = ""
+                        nombre = ""
+                        precio = ""
+                        categoria = categorias[0]
+
+                        productos.clear()
+                        productos.addAll(api.buscarProductos())
+                    }
+                    catch (e: Exception) {
+                        Log.e("API", "Error al registrar producto: ${e.message}")
+                    }
+                }
+
+
+
+            }
+        ) {
+            Text("Enviar")
+        }
+        Button(
+            onClick = {
+                id = ""
+                nombre = ""
+                precio = ""
+                categoria = categorias[0]
+            }
+        ) {
+            Text("Cancelar")
+        }
+
         Row {
             Text("Nombre", modifier = Modifier.width(150.dp), fontWeight = FontWeight.Bold)
             Text("Precio", modifier = Modifier.width(100.dp), fontWeight = FontWeight.Bold)
             Text("Categoria", modifier = Modifier.width(100.dp), fontWeight = FontWeight.Bold)
+            Text("Editar", modifier = Modifier.width(100.dp), fontWeight = FontWeight.Bold)
             Text("Eliminar", modifier = Modifier.width(100.dp), fontWeight = FontWeight.Bold)
         }
         Divider()
@@ -420,17 +532,40 @@ fun ListaProductosContent(navController: NavHostController, modifier: Modifier =
                 modifier = Modifier
                     .background(bgColor)
             ) {
-                Text(producto.nombreProducto, modifier = Modifier
+                Text(producto.nombre, modifier = Modifier
                     .width(150.dp)
                 )
                 Text("$ ${producto.precio}", modifier = Modifier
                     .width(100.dp)
                 )
-                Text(producto.categoria, modifier = Modifier
+                Text(producto.nombreCategoria, modifier = Modifier
                     .width(100.dp)
                 )
                 Button(onClick = {
-                    productos.removeAt(index)
+                    id = productos[index].id.toString()
+                    nombre = productos[index].nombre
+                    precio = productos[index].precio.toString()
+                    categoria = categorias.find { it.id == producto.idCategoria } ?: categorias[0]
+                }) {
+                    Text("Editar")
+                }
+                Button(onClick = {
+
+
+
+                    scope.launch {
+                        try {
+                            api.eliminarProducto(producto.id)
+                            Toast.makeText(context, "Producto eliminado con éxito.", Toast.LENGTH_SHORT).show()
+                            productos.removeAt(index)
+                        }
+                        catch (e: Exception) {
+                            Log.e("API", "Error al registrar producto: ${e.message}")
+                        }
+                    }
+
+
+
                 }) {
                     Text("Eliminar")
                 }
